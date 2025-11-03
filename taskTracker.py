@@ -21,7 +21,38 @@ def promptEnter(msg: str = "Press Enter to continue."):
 # store tasks in local list 
 tasks = []
 
-#viewTasksScreen function:
+# addTaskScreen function:
+# allows user to add a task to be displayed in the task list.
+
+def addTaskScreen():
+    while True:
+        clearScreen()
+        banner("Add Task")
+        print("=" * 64)
+        print()
+        print("Type your task and press Enter.")
+        print("=" * 64)
+        print()
+        print()
+        print("press 'b' and enter to go back to home screen")
+
+        task = input("> ").strip()
+
+        # check for back
+        if task.lower() == "b":
+            return
+        # check for no entry
+        if not task:
+            print("\nPlease enter a task.")
+            promptEnter()
+            continue
+        # else -- valid task -- save in list
+        tasks.append(task)
+        print("\nTask added successfully.")
+        promptEnter()
+        
+
+# viewTasksScreen function:
 # show task list, allow for addition / deletion of tasks
 
 def viewTasksScreen():
@@ -45,7 +76,7 @@ def viewTasksScreen():
         print("=" * 64)
         print()
         print()
-        print("press 'b' to go back to home screen")
+        print("press 'b' and enter to go back to home screen")
         choice = input("> ").strip().lower()
         if choice == "b":
             return
@@ -66,6 +97,8 @@ def homeMenu():
         choice = input("> ").strip()
         if choice == "1":
             viewTasksScreen()
+        elif choice == "2":
+            addTaskScreen()
         elif choice == "3":
             clearScreen()
             print("Goodbye!")

@@ -3,6 +3,10 @@
 # Sprint 1 View, Create, Delete Implementation
 import os
 
+#
+# HELPERS
+#
+
 # clearScreen function:
 # uses OS to call the cls command to clear screen
 def clearScreen():
@@ -11,6 +15,7 @@ def clearScreen():
 # banner function:
 # takes argument 'title' and prints a border around it for visual acuity
 def banner(title):
+    print(ASCII_TITLE)
     print("=" * 64)
     print(title.center(64))
     print("=" * 64)
@@ -31,6 +36,24 @@ def areYouSure(prompt):
         if answer == "n":
             return False
         print("Please enter 'y' or 'n'.")
+
+# ASCII title
+# source: https://patorjk.com/software/taag/#p=display&f=Graffiti&t=Type+Something+&x=none&v=4&h=4&w=80&we=false
+
+ASCII_TITLE = r"""
+  _______        _      _______             _             
+ |__   __|      | |    |__   __|           | |            
+    | | __ _ ___| | __    | |_ __ __ _  ___| | _____ _ __ 
+    | |/ _` / __| |/ /    | | '__/ _` |/ __| |/ / _ \ '__|
+    | | (_| \__ \   <     | | | | (_| | (__|   <  __/ |   
+    |_|\__,_|___/_|\_\    |_|_|  \__,_|\___|_|\_\___|_|   
+ 
+""".strip("\n")
+
+
+#
+# SCREENS
+#
 
 # deleteTaskScreen function:
 # allows user to delete a task to be displayed in the task list.
@@ -83,14 +106,14 @@ def deleteTaskScreen():
 
         # confirm deletion
         print(f"\nYou are about to delete:\n{number}. {tasks[number-1]}")
-        if not areYouSure("Are you sure you want to delete this item?"):
+        if not areYouSure("Are you sure you want to delete this item? \nThis action cannot be undone."):
             print("\n Deletion request canceled.")
             promptEnter()
             return
         
         # delete item
         tasks.pop(number - 1)
-        print("\n Deleted task")
+        print("\n Deleted task. \n If this was a mistake, re-add the task from the home screen.")
         promptEnter()
         return
 
@@ -166,9 +189,13 @@ def homeMenu():
         print("1) View Tasks")
         print("2) Add Task")
         print("3) Delete Task")
-        print("4) Exit\n")
+        print("4) Exit Program\n")
+        print()
+        print("Track simple to-dos right from your terminal.")
+        print("\nPress 'h' for a quick overview.\n")
 
-        choice = input("> ").strip()
+        choice = input("> ").strip().lower()
+
         if choice == "1":
             viewTasksScreen()
         elif choice == "2":
@@ -179,6 +206,14 @@ def homeMenu():
             clearScreen()
             print("Goodbye!")
             return
+        elif choice == "h":
+            clearScreen()
+            banner("Quick Overview")
+            print("• View Tasks shows your list of to-do items.")
+            print("• Add Task lets you add a new task.")
+            print("• Delete Task removes a task you added to your list.")
+            promptEnter()
+            continue
         else:
             print("\nYou entered an incorrect choice. Try again.")
             promptEnter()

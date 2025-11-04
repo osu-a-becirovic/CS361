@@ -79,7 +79,7 @@ def deleteTaskScreen():
         print("=" * 64)
         print()
         print()
-        print("press 'b' and enter to go back to home screen")
+        print("press 'b' and enter to go back to the previous screen")
         print("\nEnter the line number of the task you want to delete.")
         choice = input("> ").strip().lower()
         if choice == "b":
@@ -130,7 +130,7 @@ def addTaskScreen():
         print("=" * 64)
         print()
         print()
-        print("press 'b' and enter to go back to home screen")
+        print("press 'b' and enter to go back to the previous screen")
 
         task = input("> ").strip()
 
@@ -173,7 +173,7 @@ def viewTasksScreen():
         print("type 'add' and hit enter to add tasks.")
         print("type 'delete' and hit enter to delete tasks.")
         print()
-        print("press 'b' and enter to go back to home screen")
+        print("press 'b' and enter to go back to the previous screen")
         choice = input("> ").strip().lower()
         if choice == "b":
             return

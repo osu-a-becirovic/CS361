@@ -170,12 +170,24 @@ def viewTasksScreen():
                 print(f"{index:<6} {task}")
                 print()
         print("=" * 64)
-        print()
+        print("type 'add' and hit enter to add tasks.")
+        print("type 'delete' and hit enter to delete tasks.")
         print()
         print("press 'b' and enter to go back to home screen")
         choice = input("> ").strip().lower()
         if choice == "b":
             return
+        elif choice == "add":
+            addTaskScreen()
+            continue
+        elif choice == "delete":
+            deleteTaskScreen()
+            continue
+        elif not choice:
+            continue
+        else:
+            print("\nInvalid input. Type 'add', 'delete' 'b', or press Enter.")
+            promptEnter()
 
 
 

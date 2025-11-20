@@ -1,7 +1,83 @@
 # CS 361
 # Alen Becirovic
-# Sprint 1 View, Create, Delete Implementation
+# Sprint 2 incorporate small pool microservices
 import os
+import json
+import zmq
+
+#
+# ZMQ CONFIG
+#
+
+# microserve addresses
+MS3_ZMQ_ADDRESS = "tcp://localhost:5555"
+MS2_ZMQ_ADDRESS = "tcp://localhost:5556"
+
+# gloobal variables for pipe
+ms2_context = None
+ms3_context = None
+# microservice sockets
+user_socket = None
+event_socket = None
+
+# MS2 user global variables
+current_user = None
+session_token = None
+
+# ZMQ init for MS2
+def init_zmq_user():
+    global ms2_context, user_socket
+    if ms2_context is None:
+        ms2_context = zmq.Context()
+    if user_socket is None:
+        user_socket = ms2_context.socket(zmq.REQ)
+        user_socket.connect(MS2_ZMQ_ADDRESS)
+
+# ZMQ init for MS3
+def init_zmq_event():
+    global ms3_context, event_socket
+    if ms3_context is None:
+        ms3_context = zmq.Context()
+    if event_socket is None:
+        event_socket = ms3_context.socket(zmq.REQ)
+        event_socket.connect(MS3_ZMQ_ADDRESS)
+
+# MS2 send function
+def send_request(request):
+    init_zmq_user()
+
+    user_socket.send_string(json.dumps(request))
+    response = user_socket.recv_string()
+    return json.loads(response)
+
+#MS3 send function
+def call(object):
+    init_zmq_event()
+
+    event_socket.send_string(json.dumps(object))
+    # Message Contract -- Server Reply:
+    response = event_socket.recv().decode()
+    return response
+
+# close function for all running ZMQ pipes
+def close_zmq():
+    global ms2_context, ms3_context, user_socket, event_socket
+    # we check our context and sockets and close them
+    if user_socket is not None:
+        user_socket.close()
+    if ms2_context is not None:
+        ms2_context.term()
+
+    if event_socket is not None:
+        event_socket.close()
+    if ms3_context is not None:
+        ms3_context.term()
+
+    # clear variables
+    ms2_context = None
+    ms3_context = None
+    user_socket = None
+    event_socket = None
 
 #
 # HELPERS
@@ -55,6 +131,159 @@ ASCII_TITLE = r"""
 # SCREENS
 #
 
+# authorizationMenu function:
+# displays options to login / create an acct
+
+def authorizationMenu():
+    while True:
+        clearScreen()
+        banner("Task Tracker -- Authentication")
+        print("1) Login")
+        print("2) Create Account")
+        print("3) Exit Program\n")
+
+
+        choice = input("> ").strip().lower()
+
+        if choice == "1":
+            if loginScreen():
+                return True
+
+        elif choice == "2":
+            createAccountScreen()
+        
+        elif choice == "3":
+            clearScreen()
+            print("Goodbye!")
+            close_zmq()
+            return False
+
+        else:
+            print("\nYou entered an incorrect choice. Try again.")
+            promptEnter()
+
+
+
+# createAccountScreen function:
+# allows user to create an account via Microservice 2
+
+def createAccountScreen():
+    while True:
+        clearScreen()
+        banner("Create Account")
+        print("press 'b' and enter to go back to the previous screen\n")
+        
+        # get info for MS2 message contract -- check inputs for back command
+        username = input("Username > ").strip()
+        if username.lower() == "b":
+            return
+
+        email = input("Email > ").strip()
+        if email.lower() == "b":
+            return
+
+        # check that username and email are not blank
+        if not username or not email:
+            print("\nPlease enter both a username and an email.")
+            promptEnter()
+            continue
+        # get password for MS2 message contract - check input for back command
+        password = input("Password > ").strip()
+        if password.lower() == "b":
+            return
+        # have user enter password again
+        confirm = input("Confirm Password > ").strip()
+        if confirm.lower() == "b":
+            return
+        # check that pass is not blank
+        if not password:
+            print("\nPassword cannot be empty.")
+            promptEnter()
+            continue
+        # check that password confirm is not blank
+        if password != confirm:
+            print("\nPasswords do not match. Try again.")
+            promptEnter()
+            continue
+
+        # Call microservice 2: create_user
+        request = {
+            "action": "create_user",
+            "user_data": {
+                "username": username,
+                "email": email,
+                "password": password
+            }
+        }
+
+        response = send_request(request)
+
+        if response.get("status") == "success":
+            print(f"\nAccount created for user '{username}'.")
+            print("You can now log in from the Login screen.")
+            promptEnter()
+            return
+        else:
+            message = response.get("message", "Unknown error.")
+            print(f"\nAccount creation failed: {message}")
+            if not areYouSure("Try creating an account again?"):
+                return
+
+
+# loginScreen function:
+# allows user to login via Microservice 2
+def loginScreen():
+    global current_user, session_token
+    
+    while True:
+        clearScreen()
+        banner("Login")
+        print("press 'b' and enter to go back to the previous screen\n")
+        print("You can log in using your username and password.")
+
+        username = input("Username > ").strip()
+        if username.lower() == "b":
+            return False
+        
+        if not username:
+            print("\nPlease enter a username or email.")
+            promptEnter()
+            continue
+
+        password = input("Password > ").strip()
+        if password.lower() == "b":
+            return False
+        
+        if not password:
+            print("\nPlease enter a password.")
+            promptEnter()
+            continue
+
+        # Call microservice 2: login
+        request = {
+            "action": "login",
+            "credentials": {
+                "username": username,
+                "password": password
+            }
+        }
+    
+        response = send_request(request)
+
+        if response.get("status") == "success":
+            session_token = response.get("session_token")
+            user_obj = response.get("user", {})
+            current_user = user_obj.get("username", username)
+            print(f"\nWelcome, {current_user}!")
+            promptEnter()
+            return True
+        else:
+            message = response.get("message", "Unknown error.")
+            print(f"\nLogin failed: {message}")
+            if not areYouSure("Try logging in again?"):
+                return False
+
+
 # deleteTaskScreen function:
 # allows user to delete a task to be displayed in the task list.
 def deleteTaskScreen():
@@ -69,13 +298,16 @@ def deleteTaskScreen():
         # else display saved tasks
         else:
             # print header row
-            print(f"{'Line':<6} Task")
+            print(f"{'Line':<6} {'Task':<30} {'Added At'}")
             # print border
             print("=" * 64)
             # use enumerate() to add task number to our list items and print them
             for index, task in enumerate(tasks, start=1):
-                print(f"{index:<6} {task}")
+                description = task.get("description", "")
+                created_at = task.get("created_at", "")
+                print(f"{index:<6} {description:<30} {created_at}")
                 print()
+
         print("=" * 64)
         print()
         print()
@@ -105,7 +337,11 @@ def deleteTaskScreen():
             continue
 
         # confirm deletion
-        print(f"\nYou are about to delete:\n{number}. {tasks[number-1]}")
+        delete_task = tasks[number -1]
+        delete_description = delete_task.get("description", "")
+        delete_created = delete_task.get("created_at", "")
+        print(f"\nYou are about to delete:\n{number}. {delete_description} (added at {delete_created})")
+
         if not areYouSure("Are you sure you want to delete this item? \nThis action cannot be undone."):
             print("\n Deletion request canceled.")
             promptEnter()
@@ -137,13 +373,30 @@ def addTaskScreen():
         # check for back
         if task.lower() == "b":
             return
+        
         # check for no entry
         if not task:
             print("\nPlease enter a task.")
             promptEnter()
             continue
+
+        # call MS3
+        event_call = call({
+            "action": "timestamp",
+            "clientID": "TaskTracker",
+            "eventName": "add.task"
+        })
+
+        # get timestamp
+        data = json.loads(event_call)
+        timestamp = data.get("timestamp", "N/A")
+        
+
         # else -- valid task -- save in list
-        tasks.append(task)
+        tasks.append({
+            "description": task,
+            "created_at": timestamp
+        })
         print("\nTask added successfully.")
         promptEnter()
         
@@ -162,12 +415,14 @@ def viewTasksScreen():
         # else display saved tasks
         else:
             # print header row
-            print(f"{'Line':<6} Task")
+            print(f"{'Line':<6} {'Task':<30} {'Added At'}")
             # print border
             print("=" * 64)
             # use enumerate() to add task number to our list items and print them
             for index, task in enumerate(tasks, start=1):
-                print(f"{index:<6} {task}")
+                description = task.get("description", "")
+                created_at = task.get("created_at", "")
+                print(f"{index:<6} {description:<30} {created_at}")
                 print()
         print("=" * 64)
         print("type 'add' and hit enter to add tasks.")
@@ -215,8 +470,19 @@ def homeMenu():
         elif choice == "3":
             deleteTaskScreen()
         elif choice == "4":
+            # log out of microservice 2
+            # check if we have a session token
+            if session_token is True:
+                # send request to MS 2
+                send_request({
+                    "action": "logout",
+                    "session_token": session_token
+                })
+            
             clearScreen()
             print("Goodbye!")
+            # close pipes
+            close_zmq()
             return
         elif choice == "h":
             clearScreen()
@@ -231,4 +497,5 @@ def homeMenu():
             promptEnter()
 
 if __name__ == "__main__":
-    homeMenu()
+    if authorizationMenu():
+        homeMenu()

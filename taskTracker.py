@@ -9,16 +9,22 @@ import zmq
 # ZMQ CONFIG
 #
 
+# global app ID
+CLIENT_ID = "TaskTracker"
+
 # microserve addresses
 MS3_ZMQ_ADDRESS = "tcp://localhost:5555"
 MS2_ZMQ_ADDRESS = "tcp://localhost:5556"
+MS4_ZMQ_ADDRESS = "tcp://localhost:5554"
 
 # gloobal variables for pipe
 ms2_context = None
 ms3_context = None
+tz_context = None
 # microservice sockets
 user_socket = None
 event_socket = None
+tz_socket = None
 
 # MS2 user global variables
 current_user = None
@@ -42,6 +48,15 @@ def init_zmq_event():
         event_socket = ms3_context.socket(zmq.REQ)
         event_socket.connect(MS3_ZMQ_ADDRESS)
 
+# ZMQ init for MS4
+def init_zmq_timezone():
+    global tz_context, tz_socket
+    if tz_context is None:
+        tz_context = zmq.Context()
+    if tz_socket is None:
+        tz_socket = tz_context.socket(zmq.REQ)
+        tz_socket.connect(MS4_ZMQ_ADDRESS)
+
 # MS2 send function
 def send_request(request):
     init_zmq_user()
@@ -59,9 +74,19 @@ def call(object):
     response = event_socket.recv().decode()
     return response
 
+#MS4 send function
+def timezone_call(object):
+    init_zmq_timezone()
+
+    tz_socket.send_string(json.dumps(object))
+    # Message Contract -- Server Reply:
+    response = tz_socket.recv().decode()
+    return response
+
 # close function for all running ZMQ pipes
 def close_zmq():
-    global ms2_context, ms3_context, user_socket, event_socket
+    global ms2_context, ms3_context, tz_context, user_socket, event_socket, tz_socket
+    
     # we check our context and sockets and close them
     if user_socket is not None:
         user_socket.close()
@@ -73,15 +98,23 @@ def close_zmq():
     if ms3_context is not None:
         ms3_context.term()
 
+    if tz_socket is not None:
+        tz_socket.close()
+    if tz_context is not None:
+        tz_context.term()
+
     # clear variables
     ms2_context = None
     ms3_context = None
+    tz_context = None
     user_socket = None
     event_socket = None
+    tz_socket = None
 
 #
 # HELPERS
 #
+
 
 # clearScreen function:
 # uses OS to call the cls command to clear screen
@@ -444,6 +477,131 @@ def viewTasksScreen():
             print("\nInvalid input. Type 'add', 'delete' 'b', or press Enter.")
             promptEnter()
 
+# normalizationHelper function:
+# converts user defined entries into IANA format
+
+def normalizationHelper(value):
+    # remove leading & trailing chars
+    value = value.strip()
+
+    # divide string into substring removing underscores and spaces
+    segment = value.replace("_", " ").split()
+
+    # capitalize each substring
+    normalized_segment = [item.capitalize() for item in segment]
+
+    # connect substrings with underscores
+    return "_".join(normalized_segment)
+
+# settingsScreen function:
+# show settings for home region
+def settingsScreen():
+    while True:
+        clearScreen()
+        banner("Settings")
+        print("1) View home timezone")
+        print("2) Update home timezone")
+        print("3) Back\n")
+        
+        choice = input("> ").strip().lower()
+
+        if choice == "1":
+            # View home timezone
+            clearScreen()
+            banner("Home Timezone")
+
+            request = {
+                "action": "get_home",
+                "clientID": "TaskTracker"
+            }
+
+            response = timezone_call(request)
+            data = json.loads(response)
+
+            if data.get("status") == 200:
+                print("Your configured home timezone is:\n")
+                print(f"  {data.get('timezone')}\n")
+            else:
+                print("Unable to fetch home timezone from service.\n")
+
+            promptEnter()
+    
+        elif choice == "2":
+            # Update home timezone
+            while True:
+                clearScreen()
+                banner("Update Home Timezone")
+                print("Enter timezone in IANA format (for example:)")
+                print("Enter the CONTINENT part of your timezone (IANA format).")
+                print("Exampl: America, Europe, Asia, Africa, Australia")
+                print("\nPress 'b' and Enter to go back without changes.\n")
+
+                continent = input("> ").strip()
+                if continent.lower() == "b":
+                    break
+
+                if not continent:
+                    print("\nPlease enter a continent.")
+                    promptEnter()
+                    continue
+
+                clearScreen()
+                banner("Update Home Timezone")
+                print(f"Continent: {continent}")
+                print("Enter the CITY/REGION part of your timezone (IANA format).")
+                print("Examples: Los_Angeles, New_York, Berlin, Tokyo")
+                print("\nPress 'b' and Enter to go back without changes.\n")
+
+                city = input("> ").strip()
+                if city.lower() == "b":
+                    break
+
+                if not city:
+                    print("\nPlease enter a city/region.")
+                    promptEnter()
+                    continue
+
+                # call normalization helper on inpuits
+                normalized_city = normalizationHelper(city)
+                normalized_continent = normalizationHelper(continent)
+
+                tz_input = input("> ").strip()
+                if tz_input.lower() == "b":
+                    break
+
+                # concatenate IANA timezone
+                tz_input = f"{normalized_continent}/{normalized_city}"
+
+                request = {
+                    "action": "set_home",
+                    "clientID": "TaskTracker",
+                    "timezone": tz_input
+                }
+
+                response = timezone_call(request)
+
+                clearScreen()
+                banner("Update Home Timezone")
+
+                if data.get("status") == 200:
+                    print("Home timezone updated successfully.\n")
+                    print(f"New timezone: {data.get('timezone')}\n")
+                else:
+                    print("Timezone service rejected the update. Please try again.\n")
+
+                promptEnter()
+                # return to Settings menu
+                break 
+
+        elif choice == "3" or choice == "b":
+            return
+
+        else:
+            print("\nYou entered an incorrect choice. Try again.")
+            promptEnter()
+
+        
+
 
 
 # homeMenu function:
@@ -457,6 +615,7 @@ def homeMenu():
         print("2) Add Task")
         print("3) Delete Task")
         print("4) Exit Program\n")
+        print("5) Settings\n")
         print()
         print("Track simple to-dos right from your terminal.")
         print("\nPress 'h' for a quick overview.\n")
@@ -472,7 +631,7 @@ def homeMenu():
         elif choice == "4":
             # log out of microservice 2
             # check if we have a session token
-            if session_token is True:
+            if session_token:
                 # send request to MS 2
                 send_request({
                     "action": "logout",
@@ -484,6 +643,8 @@ def homeMenu():
             # close pipes
             close_zmq()
             return
+        elif choice == "5":
+            settingsScreen()
         elif choice == "h":
             clearScreen()
             banner("Quick Overview")

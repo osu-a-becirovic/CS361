@@ -11,6 +11,8 @@ import zmq
 
 # global app ID
 CLIENT_ID = "TaskTracker"
+# flag for using home timezone
+use_home_timezone = False
 
 # microserve addresses
 MS3_ZMQ_ADDRESS = "tcp://localhost:5555"
@@ -65,7 +67,7 @@ def send_request(request):
     response = user_socket.recv_string()
     return json.loads(response)
 
-#MS3 send function
+# MS3 send function
 def call(object):
     init_zmq_event()
 
@@ -74,7 +76,7 @@ def call(object):
     response = event_socket.recv().decode()
     return response
 
-#MS4 send function
+# MS4 send function
 def timezone_call(object):
     init_zmq_timezone()
 
@@ -386,6 +388,30 @@ def deleteTaskScreen():
         promptEnter()
         return
 
+
+# convertHomeTimezone function:
+# fetches home timezone value and converts UTC timestamp into home timezone
+def convertHomeTimezone(timestamp):
+    # call microservice for home timezone
+    home_response = timezone_call({
+        "action": "get_home",
+        "clientID": CLIENT_ID
+    })
+
+    home_data = json.loads(home_response)
+    home_timezone = home_data.get("timezone")
+
+    # call microservice to localize time
+    local_response = timezone_call({
+            "action": "localize",
+            "timestamp": timestamp,
+            "timezone": home_timezone
+        })
+    
+    localize_data = json.loads(local_response)
+    local_timestamp = localize_data.get("conversion")
+    return local_timestamp
+
 # addTaskScreen function:
 # allows user to add a task to be displayed in the task list.
 
@@ -423,12 +449,19 @@ def addTaskScreen():
         # get timestamp
         data = json.loads(event_call)
         timestamp = data.get("timestamp", "N/A")
+
+        display_timestamp = timestamp
+
+        # check if home timezone flag is on
+        if use_home_timezone and timestamp != "N/A":
+            ## USER CONVERT HELPER
+            display_timestamp = convertHomeTimezone(timestamp)
         
 
         # else -- valid task -- save in list
         tasks.append({
             "description": task,
-            "created_at": timestamp
+            "created_at": display_timestamp
         })
         print("\nTask added successfully.")
         promptEnter()
@@ -496,16 +529,36 @@ def normalizationHelper(value):
 # settingsScreen function:
 # show settings for home region
 def settingsScreen():
+    global use_home_timezone
     while True:
         clearScreen()
         banner("Settings")
-        print("1) View home timezone")
-        print("2) Update home timezone")
-        print("3) Back\n")
+        # show toggle for timezone
+        if use_home_timezone:
+            status = "ON"
+        else:
+            status = "OFF"
+        print(f"Home timezone status: {status}\n")
+
+
+        print("1) Toggle home timezone on/off")
+        print("2) View home timezone")
+        print("3) Update home timezone")
+        print("4) Back\n")
         
         choice = input("> ").strip().lower()
 
         if choice == "1":
+            # turn flag on/off
+            if use_home_timezone:
+                if areYouSure("Turn OFF home timezone to use UTC timestamps for tasks?"):
+                    use_home_timezone = False
+            else:
+                if areYouSure("Turn ON home timezone for task timestamps?"):
+                    use_home_timezone = True
+            continue 
+
+        if choice == "2":
             # View home timezone
             clearScreen()
             banner("Home Timezone")
@@ -526,13 +579,12 @@ def settingsScreen():
 
             promptEnter()
     
-        elif choice == "2":
+        elif choice == "3":
             # Update home timezone
             while True:
                 clearScreen()
                 banner("Update Home Timezone")
-                print("Enter timezone in IANA format (for example:)")
-                print("Enter the CONTINENT part of your timezone (IANA format).")
+                print("Enter the CONTINENT part of your timezone.")
                 print("Exampl: America, Europe, Asia, Africa, Australia")
                 print("\nPress 'b' and Enter to go back without changes.\n")
 
@@ -548,7 +600,7 @@ def settingsScreen():
                 clearScreen()
                 banner("Update Home Timezone")
                 print(f"Continent: {continent}")
-                print("Enter the CITY/REGION part of your timezone (IANA format).")
+                print("Enter the CITY/REGION part of your timezone.")
                 print("Examples: Los_Angeles, New_York, Berlin, Tokyo")
                 print("\nPress 'b' and Enter to go back without changes.\n")
 
@@ -585,7 +637,7 @@ def settingsScreen():
 
                 if data.get("status") == 200:
                     print("Home timezone updated successfully.\n")
-                    print(f"New timezone: {data.get('timezone')}\n")
+                    print(f"New timezone: {tz_input}\n")
                 else:
                     print("Timezone service rejected the update. Please try again.\n")
 
@@ -593,7 +645,7 @@ def settingsScreen():
                 # return to Settings menu
                 break 
 
-        elif choice == "3" or choice == "b":
+        elif choice == "4" or choice == "b":
             return
 
         else:

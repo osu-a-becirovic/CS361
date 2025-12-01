@@ -18,21 +18,27 @@ use_home_timezone = False
 MS3_ZMQ_ADDRESS = "tcp://localhost:5555"
 MS2_ZMQ_ADDRESS = "tcp://localhost:5556"
 MS4_ZMQ_ADDRESS = "tcp://localhost:5554"
+MS7_ZMQ_ADDRESS = "tcp://localhost:5552"
+MS8_ZMQ_ADDRESS = "tcp://127.0.0.1:5560"
 
-# gloobal variables for pipe
+# global variables for pipe
 ms2_context = None
 ms3_context = None
 tz_context = None
+recur_context = None
+notes_context = None
 # microservice sockets
 user_socket = None
 event_socket = None
 tz_socket = None
+recur_socket = None
+notes_socket = None
 
 # MS2 user global variables
 current_user = None
 session_token = None
 
-# ZMQ init for MS2
+# ZMQ init for MS2 - secure user service
 def init_zmq_user():
     global ms2_context, user_socket
     if ms2_context is None:
@@ -41,7 +47,7 @@ def init_zmq_user():
         user_socket = ms2_context.socket(zmq.REQ)
         user_socket.connect(MS2_ZMQ_ADDRESS)
 
-# ZMQ init for MS3
+# ZMQ init for MS3 - calendar microservice
 def init_zmq_event():
     global ms3_context, event_socket
     if ms3_context is None:
@@ -50,7 +56,7 @@ def init_zmq_event():
         event_socket = ms3_context.socket(zmq.REQ)
         event_socket.connect(MS3_ZMQ_ADDRESS)
 
-# ZMQ init for MS4
+# ZMQ init for MS4 - timezone conversion microservice
 def init_zmq_timezone():
     global tz_context, tz_socket
     if tz_context is None:
@@ -58,6 +64,24 @@ def init_zmq_timezone():
     if tz_socket is None:
         tz_socket = tz_context.socket(zmq.REQ)
         tz_socket.connect(MS4_ZMQ_ADDRESS)
+
+# ZMQ init for MS7 - recurring events microservice
+def init_zmq_recurring():
+    global recur_context, recur_socket
+    if recur_context is None:
+        recur_context = zmq.Context()
+    if recur_socket is None:
+        recur_socket = recur_context.socket(zmq.REQ)
+        recur_socket.connect(MS7_ZMQ_ADDRESS)
+
+# ZMQ init for MS8 - notes microservice
+def init_zmq_notes():
+    global notes_context, notes_socket
+    if notes_context is None:
+        notes_context = zmq.Context()
+    if notes_socket is None:
+        notes_socket = notes_context.socket(zmq.REQ)
+        notes_socket.connect(MS8_ZMQ_ADDRESS)
 
 # MS2 send function
 def send_request(request):
@@ -85,33 +109,63 @@ def timezone_call(object):
     response = tz_socket.recv().decode()
     return response
 
+# MS7 send function
+def recurring_call(request):
+    init_zmq_recurring()
+    recur_socket.send_string(json.dumps(request))
+    response = recur_socket.recv().decode()
+    return response
+
+# MS8 send function
+def note_call(request):
+    init_zmq_notes()
+    notes_socket.send_json(request)
+    response = notes_socket.recv_json()
+    return response
+
 # close function for all running ZMQ pipes
 def close_zmq():
-    global ms2_context, ms3_context, tz_context, user_socket, event_socket, tz_socket
+    global ms2_context, ms3_context, tz_context, user_socket, event_socket, tz_socket, recur_context, recur_socket, notes_context, notes_socket
     
     # we check our context and sockets and close them
+    # MS2
     if user_socket is not None:
         user_socket.close()
     if ms2_context is not None:
         ms2_context.term()
-
+    # MS3
     if event_socket is not None:
         event_socket.close()
     if ms3_context is not None:
         ms3_context.term()
-
+    # MS4
     if tz_socket is not None:
         tz_socket.close()
     if tz_context is not None:
         tz_context.term()
+    # MS7
+    if recur_socket is not None:
+        recur_socket.close()
+    if recur_context is not None:
+        recur_context.term()
+
+    # MS8
+    if notes_socket is not None:
+        notes_socket.close()
+    if notes_context is not None:
+        notes_context.term()
 
     # clear variables
     ms2_context = None
     ms3_context = None
     tz_context = None
+    recur_context = None
     user_socket = None
     event_socket = None
     tz_socket = None
+    recur_socket = None
+    notes_socket = None
+    notes_context = None
 
 #
 # HELPERS
@@ -388,6 +442,17 @@ def deleteTaskScreen():
         promptEnter()
         return
 
+# convertExistingTasksHelper function:
+# helper that loops thru all existing tasks, and converts them to the home timezone
+def convertExistingTasksHelper():
+    if not tasks:
+        return
+    for item in tasks:
+        utc_val = item.get("created_utc")
+        local_val = convertHomeTimezone(utc_val)
+        if local_val is True:
+            item["created_at"] = local_val
+
 
 # convertHomeTimezone function:
 # fetches home timezone value and converts UTC timestamp into home timezone
@@ -457,15 +522,142 @@ def addTaskScreen():
             ## USER CONVERT HELPER
             display_timestamp = convertHomeTimezone(timestamp)
         
+        recurring_flag = False
+        repeat_frequency = None
+
+        while True:   
+            repeat_answer = input("\nDoes this task repeat? (y/n) > ").strip().lower()
+            if repeat_answer == "y":
+                recurring_flag = True
+     
+                while recurring_flag is True:
+                    freq = input("How often? (daily/weekly/monthly) > ").strip().lower()
+                    if freq in ("daily", "weekly", "monthly"):
+                        repeat_frequency = freq
+                        break
+                    else:
+                        print("Please enter 'daily', 'weekly', or 'monthly'.")
+                break
+            elif repeat_answer == "n":
+                break
+            else:
+                print("Please enter 'y' or 'n'.")
 
         # else -- valid task -- save in list
         tasks.append({
             "description": task,
-            "created_at": display_timestamp
+            "created_at": display_timestamp,
+            "created_utc": timestamp,
+            "recurring": recurring_flag,
+            "repeat_frequency": repeat_frequency,
         })
         print("\nTask added successfully.")
         promptEnter()
-        
+
+# expandHelper function:
+# calls MS7
+def expandRecurringTasks():
+    while True:
+        clearScreen()
+        banner("Expand Recurring Events")
+
+        if not tasks:
+            print("No tasks added.\n")
+            promptEnter()
+            return
+    
+        recurring_task_list = []
+        print(f"{'Line':<6} {'Task':<30} {'Recurring':<10} {'Frequency'}")
+        print("=" * 64)
+        for index, task in enumerate(tasks, start=1):
+            description = task.get("description", "")
+            recurring = task.get("recurring", False)
+            frequency = task.get("repeat_frequency") or "-"
+            flag = "Yes" if recurring else "No"
+            print(f"{index:<6} {description:<30} {flag:<10} {frequency}")
+            if recurring:
+                recurring_task_list.append(index)
+        print()
+
+        if not recurring_task_list:
+            print("You have no recurring tasks to expand.\n")
+            promptEnter()
+            return
+    
+        print("Enter the line number of a recurring task to expand,")
+        print("or press 'b' and Enter to go back.\n")
+        choice = input("> ").strip().lower()
+
+        if choice == "b":
+            return
+
+        if not choice.isdigit():
+            print("\nPlease enter a valid line number.")
+            promptEnter()
+            continue
+
+        number = int(choice)
+        if number not in recurring_task_list:
+            print("\nPlease select a line number for a recurring task.")
+            promptEnter()
+            continue
+
+        selected = tasks[number - 1]
+        start_utc = selected.get("created_utc")
+        frequency = selected.get("repeat_frequency")
+
+    # Ask for end date
+        while True:
+            clearScreen()
+            banner("Expand Recurring Events")
+            print(f"Task: {selected.get('description', '')}")
+            print(f"Start (UTC): {start_utc}")
+            print(f"Frequency: {frequency}")
+            print("\nEnter the END date for expansion in ISO format (YYYY-MM-DD).")
+            print("Press 'b' and Enter to go back.\n")
+
+            end_input = input("> ").strip()
+            if end_input.lower() == "b":
+                return
+
+            if not end_input:
+                print("\nPlease enter a date.")
+                promptEnter()
+                continue
+
+            # Build request for Recurring Event Service (MS7)
+            request = {
+                "action": "expand_event",
+                "start_date": start_utc,
+                "frequency": frequency,
+                "end_date": end_input
+            }
+
+            response_text = recurring_call(request)
+            response = json.loads(response_text)
+
+            clearScreen()
+            banner("Recurring Instances")
+
+            status = response.get("status")
+            if status != 200:
+                print("Recurring Event Service returned an error:\n")
+                print(f"Status: {status}")
+                print(f"Error: {response.get('error', 'Unknown error')}\n")
+                promptEnter()
+                return
+
+            instances = response.get("instances", [])
+            if not instances:
+                print("No occurrences found in the requested date range.\n")
+            else:
+                print("Upcoming occurrences:\n")
+                for idx, instance in enumerate(instances, start=1):
+                    print(f"{idx}. {instance}")
+                print()
+
+            promptEnter()
+            return
 
 # viewTasksScreen function:
 # show task list, allow for addition / deletion of tasks
@@ -493,6 +685,7 @@ def viewTasksScreen():
         print("=" * 64)
         print("type 'add' and hit enter to add tasks.")
         print("type 'delete' and hit enter to delete tasks.")
+        print("type 'expand' and hit enter to see recurring instances.")
         print()
         print("press 'b' and enter to go back to the previous screen")
         choice = input("> ").strip().lower()
@@ -504,10 +697,13 @@ def viewTasksScreen():
         elif choice == "delete":
             deleteTaskScreen()
             continue
+        elif choice == "expand":
+            expandRecurringTasks()
+            continue
         elif not choice:
             continue
         else:
-            print("\nInvalid input. Type 'add', 'delete' 'b', or press Enter.")
+            print("\nInvalid input. Type 'add', 'delete', 'expand', 'b', or press Enter.")
             promptEnter()
 
 # normalizationHelper function:
@@ -556,6 +752,10 @@ def settingsScreen():
             else:
                 if areYouSure("Turn ON home timezone for task timestamps?"):
                     use_home_timezone = True
+                    if tasks and areYouSure("Convert existing tasks to your home timezone now?"):
+                        convertExistingTasksHelper()
+                        print("\nExisting tasks have been converted to your home timezone.")
+                        promptEnter()
             continue 
 
         if choice == "2":
@@ -652,8 +852,119 @@ def settingsScreen():
             print("\nYou entered an incorrect choice. Try again.")
             promptEnter()
 
-        
+#notesScreen function:asdf
+# show shows add/delete/view for Notes microservice
+def notesScreen():
+    while True:
+        clearScreen()
+        banner("Notes")
 
+        print("1) View all notes")
+        print("2) View a note by ID")
+        print("3) Add a note")
+        print("4) Delete a note")
+        print("5) Back\n")
+
+        choice = input("> ").strip().lower()
+        if choice == "1":
+            clearScreen()
+            banner("All Notes")
+            response = note_call({"command": "show_all"})
+            # check for notes
+            if not response:
+                print("No notes found.\n")
+            else:
+                # print table
+                print(f"{'ID':<6} {'Note'}")
+                print("=" * 64)
+                # iterate through notes array and print notes
+                for note_id, note_text in response.items():
+                    print(f"{note_id:<6} {note_text}")
+                print()
+            promptEnter()
+
+        elif choice == "2":
+            clearScreen()
+            banner("View Note")
+            print("Enter the Note's ID to view.")
+            print("Press 'b' and Enter to go back.\n")
+            note_id_input = input("> ").strip().lower()
+            # validate input -- exit out if b
+            if note_id_input == "b":
+                continue
+            if not note_id_input.isdigit():
+                print("\nPlease enter a numeric ID.")
+                promptEnter()
+                continue
+
+            note_id = int(note_id_input)
+            # call notes microservice -- get note
+            response = note_call({
+                "command": "get_note",
+                "id": note_id
+            })
+
+            print()
+            print(f"ID:   {response.get('id')}")
+            print(f"Note: {response.get('note')}\n")
+            promptEnter()
+
+        elif choice == "3":
+            clearScreen()
+            banner("Add Note")
+            print("Add your note and press Enter.")
+            print("Press 'b' and Enter to go back.\n")
+            # validate input
+            note_id_input = input("> ").strip()
+            if note_id_input.lower() == "b":
+                continue
+            if not note_id_input:
+                print("\nPlease enter a note.")
+                promptEnter()
+                continue
+            # call notes microservice -- add
+            response = note_call({
+                "command": "add",
+                "note": note_id_input
+            })
+            note_id = response.get("id")
+            print(f"\nNote added with ID {note_id}.")
+            promptEnter()
+
+        elif choice == "4":
+            clearScreen()
+            banner("Delete Note")
+            print("Enter the ID of the note you want to delete.")
+            print("Press 'b' and Enter to go back.\n")
+
+            note_id_input = input("> ").strip().lower()
+            # validate numerical input / back
+            if note_id_input == "b":
+                continue
+            if not note_id_input.isdigit():
+                print("\nPlease enter a number for ID.")
+                promptEnter()
+                continue
+            note_id = int(note_id_input)
+            # confirm delete
+            if not areYouSure(f"Do you really want to delete {note_id}? This cannot be undone."):
+                print("\nOperation canceled.")
+                promptEnter()
+                continue
+            response = note_call({
+                "command": "delete",
+                "id": note_id
+            })
+            print()
+            print(f"\nNote with ID {note_id} deleted.")
+            promptEnter()
+
+        elif choice == "5" or choice == "b":
+            return
+        
+        else:
+            print("\nYou entered an incorrect choice. Try again.")
+            promptEnter()
 
 
 # homeMenu function:
@@ -666,8 +977,9 @@ def homeMenu():
         print("1) View Tasks")
         print("2) Add Task")
         print("3) Delete Task")
-        print("4) Exit Program\n")
-        print("5) Settings\n")
+        print("4) Notes\n") 
+        print("5) Settings")
+        print("6) Exit Program\n")
         print()
         print("Track simple to-dos right from your terminal.")
         print("\nPress 'h' for a quick overview.\n")
@@ -681,6 +993,10 @@ def homeMenu():
         elif choice == "3":
             deleteTaskScreen()
         elif choice == "4":
+            notesScreen()
+        elif choice == "5":
+            settingsScreen()
+        elif choice == "6":
             # log out of microservice 2
             # check if we have a session token
             if session_token:
@@ -695,14 +1011,14 @@ def homeMenu():
             # close pipes
             close_zmq()
             return
-        elif choice == "5":
-            settingsScreen()
         elif choice == "h":
             clearScreen()
             banner("Quick Overview")
             print("• View Tasks shows your list of to-do items.")
             print("• Add Task lets you add a new task.")
             print("• Delete Task removes a task you added to your list.")
+            print("• View Settings lets you view and change your home region.")
+            print("• View Notes lets you add, delete, and view Notes you set.")
             promptEnter()
             continue
         else:
